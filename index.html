@@ -185,6 +185,7 @@ map.on('click', e => {
   const p = g.properties, typ = {grusvag: 'Grusväg', skogsvag: 'Skogs-/brukningsväg', cykelvag: 'Cykelväg (grus)'}[p.k];
   new maplibregl.Popup({maxWidth: '260px'}).setLngLat(e.lngLat).setHTML(`<div class="pp"><h3>${esc(p.n || typ)}</h3><div class="meta">${esc(typ)}${p.y ? ' · ' + esc(p.y) : ''}${p.a ? `<br><b>Obs:</b> märkt som ${esc({private: 'privat', no: 'förbjuden', destination: 'endast ärende', forestry: 'skogsbruk', agricultural: 'jordbruk'}[p.a] || p.a)} i OSM` : ''}<br>Källa: © OpenStreetMap-bidragsgivare</div></div>`).addTo(map);
 });
+if (window.innerWidth < 600) document.getElementById('panel').classList.add('closed');
 document.getElementById('toggle').onclick = () => document.getElementById('panel').classList.toggle('closed');
 document.getElementById('sok').addEventListener('change', e => {
   const q = e.target.value.trim(); if (!q || !DATA) return;
