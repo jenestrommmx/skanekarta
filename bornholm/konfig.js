@@ -1,0 +1,1 @@
+window.KONFIG={"titel": "Bornholm – vandring och cykel", "bounds": [[14.6757093, 54.9872394], [15.1569217, 55.2991212]], "grusfiler": ["grus"], "nv": false, "attribution": "Leder, stigar och grusvägar: © <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap-bidragsgivare</a>"};
