@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skånekarta – leder i Skåne</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<script src="leder.js"></script>
+<style>
+  html,body{margin:0;height:100%;font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;color:#1d2a22}
+  #map{position:absolute;inset:0}
+  #panel{position:absolute;top:10px;left:10px;z-index:2;background:#fff;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.18);padding:10px 12px;width:250px;max-width:calc(100vw - 80px)}
+  #panel h1{font-size:16px;margin:0 0 6px}
+  #panel label{display:flex;align-items:center;gap:6px;margin:3px 0;cursor:pointer}
+  .sw{display:inline-block;width:22px;height:4px;border-radius:2px}
+  .dash{background:repeating-linear-gradient(90deg,#2471a3 0 6px,transparent 6px 10px)}
+  #sok{width:100%;box-sizing:border-box;padding:6px 8px;margin:6px 0 2px;border:1px solid #c9d3cc;border-radius:6px;font:inherit}
+  #legend{margin:6px 0 0;padding-top:6px;border-top:1px solid #e3e8e4;font-size:12px}
+  #legend div{display:flex;align-items:center;gap:6px;margin:2px 0}
+  #info{font-size:12px;color:#5a6b60;margin-top:6px}
+  #toggle{display:none}
+  .maplibregl-popup-content{padding:10px 12px;border-radius:8px;min-width:200px}
+  .pp h3{margin:0 0 4px;font-size:15px}
+  .pp .meta{color:#5a6b60;font-size:12px;margin-bottom:8px}
+  .pp button{background:#1e6b3a;color:#fff;border:0;border-radius:6px;padding:7px 10px;font:inherit;cursor:pointer;width:100%}
+  .pp a{font-size:12px}
+  @media (max-width:600px){
+    #panel{width:auto;right:60px}
+    #panel.closed .body{display:none}
+    #toggle{display:block;position:absolute;top:8px;right:10px;border:0;background:none;font-size:18px;cursor:pointer}
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <button id="toggle" aria-label="Visa/dölj">☰</button>
+  <h1>Leder i Skåne</h1>
+  <div class="body">
+    <label><input type="checkbox" id="cb-vandring" checked> Vandringsleder</label>
+    <label><input type="checkbox" id="cb-cykel" checked> Cykelleder (och ridleder)</label>
+    <label><input type="checkbox" id="cb-strov" checked> Strövområden utan utmärkt led</label>
+    <label><input type="checkbox" id="cb-grus" checked> Grusvägar (syns från zoom 10)</label>
+    <input id="sok" list="namn" placeholder="Sök led eller område…">
+    <datalist id="namn"></datalist>
+    <div id="legend">
+      <div><span class="sw" style="background:#c0392b"></span>Skåneleden och andra nationella leder</div>
+      <div><span class="sw" style="background:#e67e22"></span>Lokala leder och slingor</div>
+      <div><span class="sw" style="background:#1e8449"></span>Leder i naturreservat (Naturvårdsverket)</div>
+      <div><span class="sw" style="background:#1a4f8b;height:5px"></span>Kattegattleden, Sydkustleden m.fl. (cykel)</div>
+      <div><span class="sw" style="background:#4a90d9"></span>Lokala cykelleder och MTB</div>
+      <div><span class="sw dash"></span>Cykel- och ridleder i reservat</div>
+      <div><span class="sw" style="background:#b9d6a2;height:10px;border:1px solid #6b8e4e"></span>Strövområde med stigar men utan utmärkt led</div>
+      <div><span class="sw" style="background:#c0782f"></span>Grusväg</div>
+      <div><span class="sw" style="background:repeating-linear-gradient(90deg,#8d6e63 0 5px,transparent 5px 8px)"></span>Skogs-/brukningsväg</div>
+    </div>
+    <div id="info">Klicka på en led för namn, längd och GPX.</div>
+  </div>
+</div>
+<script>
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [13.55, 55.95], zoom: 8.2, minZoom: 6, maxZoom: 18,
+  attributionControl: false
+});
+map.addControl(new maplibregl.NavigationControl(), 'top-right');
+map.addControl(new maplibregl.GeolocateControl({trackUserLocation: true}), 'top-right');
+map.addControl(new maplibregl.ScaleControl({unit: 'metric'}), 'bottom-left');
+map.addControl(new maplibregl.AttributionControl({compact: true,
+  customAttribution: 'Leder: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap-bidragsgivare</a>, Naturvårdsverket (CC0)'}));
+
+let DATA = null, selected = null;
+const color = ['case',
+  ['==', ['get', 'lager'], 'cykel_rid'], '#2471a3',
+  ['all', ['==', ['get', 'lager'], 'cykel'], ['in', ['get', 'natverk'], ['literal', ['nationell', 'internationell']]]], '#1a4f8b',
+  ['==', ['get', 'lager'], 'cykel'], '#4a90d9',
+  ['==', ['get', 'kalla'], 'Naturvårdsverket'], '#1e8449',
+  ['in', ['get', 'natverk'], ['literal', ['nationell', 'internationell', 'regional']]], '#c0392b',
+  '#e67e22'];
+
+map.on('load', () => {
+  DATA = window.LEDER;
+  if (!DATA) { document.getElementById('info').textContent = 'Kunde inte läsa leder.js'; return; }
+  DATA.features.forEach((f, i) => f.id = i);
+  map.addSource('leder', {type: 'geojson', data: DATA});
+  const vandr = ['==', ['get', 'lager'], 'vandring'], cyk = ['==', ['get', 'lager'], 'cykel_rid'];
+  map.addLayer({id: 'vald', type: 'line', source: 'leder', filter: ['==', ['id'], -1],
+    paint: {'line-color': '#ffeb3b', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 7, 14, 12], 'line-opacity': .9},
+    layout: {'line-cap': 'round', 'line-join': 'round'}});
+  map.addLayer({id: 'cykel', type: 'line', source: 'leder', filter: ['==', ['get', 'lager'], 'cykel'],
+    paint: {'line-color': color, 'line-width': ['interpolate', ['linear'], ['zoom'], 7, ['case', ['==', ['get', 'natverk'], 'lokal'], 1, 2.5], 14, 5]},
+    layout: {'line-cap': 'round', 'line-join': 'round'}});
+  map.addLayer({id: 'rid', type: 'line', source: 'leder', filter: cyk,
+    paint: {'line-color': color, 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1.5, 14, 4], 'line-dasharray': [2, 1.5]}});
+  map.addLayer({id: 'vandring', type: 'line', source: 'leder', filter: vandr,
+    paint: {'line-color': color, 'line-width': ['interpolate', ['linear'], ['zoom'], 8, ['case', ['==', ['get', 'natverk'], 'nationell'], 2.2, 1.4], 14, 4.5]},
+    layout: {'line-cap': 'round', 'line-join': 'round'}});
+  map.addLayer({id: 'traff', type: 'line', source: 'leder', paint: {'line-color': '#000', 'line-opacity': 0, 'line-width': 14}});
+
+  // strövområden laddas efter lederna så att kartan blir klar snabbare
+  const sc = document.createElement('script'); sc.src = 'strov.js';
+  sc.onload = () => {
+    map.addSource('strov', {type: 'geojson', data: window.STROV});
+    const yta = ['!', ['has', 'stig']];
+    map.addLayer({id: 'strov-yta', type: 'fill', source: 'strov', filter: yta, paint: {'fill-color': '#9cc77f', 'fill-opacity': 0.28}}, 'vald');
+    map.addLayer({id: 'strov-kant', type: 'line', source: 'strov', filter: yta, paint: {'line-color': '#6b8e4e', 'line-width': 1}}, 'vald');
+    map.addLayer({id: 'strov-stig', type: 'line', source: 'strov', minzoom: 12, filter: ['has', 'stig'],
+      paint: {'line-color': '#7a5230', 'line-width': 1.4, 'line-dasharray': [1, 1.2]}}, 'vald');
+    const n = window.STROV.features.filter(f => !f.properties.stig);
+    document.getElementById('namn').innerHTML += n.map(f => `<option value="${esc(f.properties.namn)}">`).join('');
+  };
+  document.head.appendChild(sc);
+  map.addSource('grus', {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+  map.addLayer({id: 'grus', type: 'line', source: 'grus', minzoom: 10, filter: ['!=', ['get', 'k'], 'skogsvag'],
+    paint: {'line-color': '#c0782f', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 15, 3.5]}}, 'vald');
+  map.addLayer({id: 'skogsvag', type: 'line', source: 'grus', minzoom: 10, filter: ['==', ['get', 'k'], 'skogsvag'],
+    paint: {'line-color': '#8d6e63', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.8, 15, 3], 'line-dasharray': [2, 1]}}, 'vald');
+  map.on('zoomend', laddaGrus); laddaGrus();
+  const names = [...new Set(DATA.features.flatMap(f => [f.properties.namn, ...(f.properties.omrade ? f.properties.omrade.split(', ') : [])]))].sort((a, b) => a.localeCompare(b, 'sv'));
+  document.getElementById('namn').innerHTML = names.map(n => `<option value="${esc(n)}">`).join('');
+});
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
+function visible(f) {
+  return f.properties.lager === 'vandring' ? document.getElementById('cb-vandring').checked : document.getElementById('cb-cykel').checked;
+}
+function bounds(fs) {
+  const b = new maplibregl.LngLatBounds();
+  fs.forEach(f => lines(f.geometry).forEach(l => l.forEach(c => b.extend(c))));
+  return b;
+}
+function lines(g) { return g.type === 'LineString' ? [g.coordinates] : g.coordinates; }
+
+function lucknote(f) {
+  const k = kedja(lines(f.geometry));
+  return k.delar.length > 1 ? `<div class="meta" style="color:#a04000">Obs: leden har ${k.delar.length - 1} lucka/luckor i datat (ca ${k.lucka.toFixed(1)} km). GPX-filen får ${k.delar.length} delar.</div>` : '';
+}
+function select(f, lngLat) {
+  selected = f;
+  map.setFilter('vald', ['==', ['id'], f.id]);
+  const p = f.properties;
+  const src = p.kalla === 'OpenStreetMap' ? `<a href="https://www.openstreetmap.org/relation/${p.id.slice(4)}" target="_blank" rel="noopener">OpenStreetMap</a>` : 'Naturvårdsverket';
+  const meta = [p.km.toLocaleString('sv-SE', {maximumFractionDigits: 1}) + ' km', p.kommun, p.omrade, p.typ && p.kalla !== 'OpenStreetMap' ? p.typ : '', p.markering && p.kalla !== 'OpenStreetMap' ? 'Markering: ' + p.markering : ''].filter(Boolean).map(esc).join(' · ');
+  new maplibregl.Popup({maxWidth: '280px'}).setLngLat(lngLat).setHTML(
+    `<div class="pp"><h3>${esc(p.namn)}</h3><div class="meta">${meta}<br>Källa: ${src}${p.webb ? ` · <a href="${esc(p.webb)}" target="_blank" rel="noopener">webbplats</a>` : ''}</div>
+     ${lucknote(f)}<button onclick="laddaGPX()">Ladda ner GPX</button></div>`).addTo(map)
+    .on('close', () => { map.setFilter('vald', ['==', ['id'], -1]); });
+}
+
+map.on('click', 'traff', e => {
+  const f = e.features.map(x => DATA.features[x.id]).find(visible);
+  if (f) select(f, e.lngLat);
+});
+map.on('mousemove', 'traff', e => { map.getCanvas().style.cursor = e.features.some(x => visible(DATA.features[x.id])) ? 'pointer' : ''; });
+map.on('mouseleave', 'traff', () => { map.getCanvas().style.cursor = ''; });
+
+document.getElementById('cb-vandring').onchange = e => map.setLayoutProperty('vandring', 'visibility', e.target.checked ? 'visible' : 'none');
+document.getElementById('cb-cykel').onchange = e => ['cykel', 'rid'].forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none'));
+document.getElementById('cb-strov').onchange = e => ['strov-yta', 'strov-kant', 'strov-stig'].forEach(l => map.getLayer(l) && map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none'));
+map.on('click', 'strov-yta', e => {
+  if (map.queryRenderedFeatures(e.point, {layers: ['traff']}).some(x => visible(DATA.features[x.id]))) return;
+  const p = e.features[0].properties;
+  new maplibregl.Popup({maxWidth: '280px'}).setLngLat(e.lngLat).setHTML(
+    `<div class="pp"><h3>${esc(p.namn)}</h3><div class="meta">${p.ha} ha · ${String(p.stig_km).replace('.', ',')} km stigar · ${Math.round(p.andel_led * 100)} % av stigarna ligger på en utmärkt led</div>
+     <div class="meta">Stigarna (prickade, syns när du zoomar in) är inte en utmärkt led. Ingen GPX.</div></div>`).addTo(map);
+});
+map.on('mouseenter', 'strov-yta', () => { if (!map.getCanvas().style.cursor) map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'strov-yta', () => { map.getCanvas().style.cursor = ''; });
+const GRUSFILER = []; for (let x = 0; x < 6; x++) for (let y = 0; y < 4; y++) GRUSFILER.push(`grus_${x}_${y}`);
+let grusStartad = false;
+function laddaGrus() {
+  if (grusStartad || map.getZoom() < 9.5 || !document.getElementById('cb-grus').checked) return;
+  grusStartad = true; let kvar = GRUSFILER.length;
+  const klar = () => { if (--kvar) return;
+    map.getSource('grus').setData({type: 'FeatureCollection', features: Object.values(window.GRUS || {}).flatMap(fc => fc.features)}); };
+  GRUSFILER.forEach(k => { const s = document.createElement('script'); s.src = `grus/${k}.js`; s.onload = klar; s.onerror = klar; document.head.appendChild(s); });
+}
+document.getElementById('cb-grus').onchange = e => { ['grus', 'skogsvag'].forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none')); laddaGrus(); };
+map.on('click', e => {
+  if (map.queryRenderedFeatures(e.point, {layers: ['traff']}).some(x => visible(DATA.features[x.id]))) return;
+  const g = map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], {layers: ['grus', 'skogsvag'].filter(l => map.getLayer(l))})[0];
+  if (!g) return;
+  const p = g.properties, typ = {grusvag: 'Grusväg', skogsvag: 'Skogs-/brukningsväg', cykelvag: 'Cykelväg (grus)'}[p.k];
+  new maplibregl.Popup({maxWidth: '260px'}).setLngLat(e.lngLat).setHTML(`<div class="pp"><h3>${esc(p.n || typ)}</h3><div class="meta">${esc(typ)}${p.y ? ' · ' + esc(p.y) : ''}${p.a ? `<br><b>Obs:</b> märkt som ${esc({private: 'privat', no: 'förbjuden', destination: 'endast ärende', forestry: 'skogsbruk', agricultural: 'jordbruk'}[p.a] || p.a)} i OSM` : ''}<br>Källa: © OpenStreetMap-bidragsgivare</div></div>`).addTo(map);
+});
+document.getElementById('toggle').onclick = () => document.getElementById('panel').classList.toggle('closed');
+document.getElementById('sok').addEventListener('change', e => {
+  const q = e.target.value.trim(); if (!q || !DATA) return;
+  let hits = DATA.features.filter(f => f.properties.namn === q || f.properties.omrade.split(', ').includes(q));
+  if (!hits.length && window.STROV) { const sh = window.STROV.features.filter(f => !f.properties.stig && f.properties.namn === q); if (sh.length) { map.fitBounds(bounds(sh.map(f => ({geometry: {type: 'MultiLineString', coordinates: f.geometry.type === 'Polygon' ? f.geometry.coordinates : f.geometry.coordinates.flat()}}))), {padding: 60, maxZoom: 15}); return; } }
+  if (!hits.length) return;
+  map.fitBounds(bounds(hits), {padding: 60, maxZoom: 15});
+  if (hits.length === 1) { const c = lines(hits[0].geometry)[0]; select(hits[0], c[Math.floor(c.length / 2)]); }
+});
+
+// GPX: lägger delsträckorna i följd, med start i en fri ände. Skarvar över 200 m blir egna spårdelar (luckor i datat).
+function km(a, b) { return Math.hypot((a[0] - b[0]) * 111.32 * Math.cos(a[1] * Math.PI / 180), (a[1] - b[1]) * 110.57); }
+function kedja(segs) {
+  const rest = segs.map(s => s.slice());
+  let si = 0, srev = false, sd = -1;
+  rest.forEach((s, i) => [[s[0], false], [s[s.length - 1], true]].forEach(([p, rev]) => {
+    let m = Infinity; rest.forEach((t, j) => { if (j !== i) m = Math.min(m, km(p, t[0]), km(p, t[t.length - 1])); });
+    if (m === Infinity) m = 0; if (m > sd) { sd = m; si = i; srev = rev; }
+  }));
+  let cur = rest.splice(si, 1)[0]; if (srev) cur.reverse();
+  const delar = [cur]; let lucka = 0;
+  while (rest.length) {
+    const end = cur[cur.length - 1]; let bi = 0, rev = false, bd = Infinity;
+    rest.forEach((s, i) => {
+      const a = km(end, s[0]), b = km(end, s[s.length - 1]);
+      if (a < bd) { bd = a; bi = i; rev = false; } if (b < bd) { bd = b; bi = i; rev = true; }
+    });
+    const s = rest.splice(bi, 1)[0]; if (rev) s.reverse();
+    if (bd > 0.2) { cur = s; delar.push(cur); lucka += bd; }
+    else cur.push(...(bd < 0.001 ? s.slice(1) : s));
+  }
+  return {delar, lucka};
+}
+function laddaGPX() {
+  if (!selected) return;
+  const p = selected.properties, k = kedja(lines(selected.geometry));
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Skånekarta" xmlns="http://www.topografix.com/GPX/1/1">
+<metadata><name>${esc(p.namn)}</name><desc>Källa: ${p.kalla === 'OpenStreetMap' ? '© OpenStreetMap-bidragsgivare (ODbL)' : 'Naturvårdsverket (CC0)'}</desc></metadata>
+<trk><name>${esc(p.namn)}</name>
+${k.delar.map(d => '<trkseg>\n' + d.map(c => `<trkpt lat="${c[1]}" lon="${c[0]}"/>`).join('\n') + '\n</trkseg>').join('\n')}
+</trk></gpx>`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([gpx], {type: 'application/gpx+xml'}));
+  a.download = p.namn.replace(/[^\wåäöÅÄÖ\- ]+/g, '').trim().replace(/\s+/g, '_') + '.gpx';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+</script>
+</body>
+</html>
