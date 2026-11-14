@@ -6,11 +6,13 @@
 <title>Skånekarta – leder i Skåne</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<script src="/skanekarta/kartor.js"></script>
 <script src="leder.js"></script>
 <style>
   html,body{margin:0;height:100%;font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;color:#1d2a22}
   #map{position:absolute;inset:0}
   #panel{position:absolute;top:10px;left:10px;z-index:2;background:#fff;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.18);padding:10px 12px;width:250px;max-width:calc(100vw - 80px)}
+  #kartval{display:block;width:100%;margin:0 0 6px;padding:5px 6px;border:1px solid #c9d3cc;border-radius:6px;font:600 14px system-ui,sans-serif;background:#f4f7f5;color:#1d2a22}
   #panel h1{font-size:16px;margin:0 0 6px}
   #panel label{display:flex;align-items:center;gap:6px;margin:3px 0;cursor:pointer}
   .sw{display:inline-block;width:22px;height:4px;border-radius:2px}
@@ -37,6 +39,7 @@
 <div id="panel">
   <button id="toggle" aria-label="Visa/dölj">☰</button>
   <h1>Leder i Skåne</h1>
+  <select id="kartval" aria-label="Byt karta" hidden></select>
   <div class="body">
     <label><input type="checkbox" id="cb-vandring" checked> Vandringsleder</label>
     <label><input type="checkbox" id="cb-cykel" checked> Cykelleder (och ridleder)</label>
@@ -71,6 +74,15 @@ map.addControl(new maplibregl.ScaleControl({unit: 'metric'}), 'bottom-left');
 map.addControl(new maplibregl.AttributionControl({compact: true,
   customAttribution: 'Leder: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap-bidragsgivare</a>, Naturvårdsverket (CC0)'}));
 
+// Kartmeny: läser /skanekarta/kartor.js (finns bara på den publicerade sidan)
+(function () {
+  const sel = document.getElementById('kartval'), K = window.KARTOR;
+  if (!sel || !K || K.length < 2) return;
+  const här = location.pathname.replace(/index\.html$/, '');
+  sel.innerHTML = K.map(k => `<option value="${k.url}"${k.url === här ? ' selected' : ''}>${k.namn}</option>`).join('');
+  sel.hidden = false;
+  sel.onchange = () => { location.href = sel.value; };
+})();
 let DATA = null, selected = null;
 const color = ['case',
   ['==', ['get', 'lager'], 'cykel_rid'], '#2471a3',
