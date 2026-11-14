@@ -71,7 +71,10 @@ const map = new maplibregl.Map({
   attributionControl: false
 });
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
-map.addControl(new maplibregl.GeolocateControl({trackUserLocation: true}), 'top-right');
+// Strövläge: adressen slutar på ?strov -> bara strövområden tända och zoom till din position
+const STROVLAGE = /[?&]strov\b/.test(location.search);
+const geo = new maplibregl.GeolocateControl({trackUserLocation: true, fitBoundsOptions: {maxZoom: STROVLAGE ? 12 : 15}});
+map.addControl(geo, 'top-right');
 map.addControl(new maplibregl.ScaleControl({unit: 'metric'}), 'bottom-left');
 map.addControl(new maplibregl.AttributionControl({compact: true,
   customAttribution: window.KONFIG.attribution}));
@@ -135,8 +138,13 @@ map.on('load', () => {
   map.on('zoomend', laddaGrus); laddaGrus();
   const names = [...new Set(DATA.features.flatMap(f => [f.properties.namn, ...(f.properties.omrade ? f.properties.omrade.split(', ') : [])]))].sort((a, b) => a.localeCompare(b, 'sv'));
   document.getElementById('namn').innerHTML = names.map(n => `<option value="${esc(n)}">`).join('');
+  if (STROVLAGE) strovlage();
 });
 
+function strovlage() {
+  ['cb-vandring', 'cb-cykel', 'cb-grus'].forEach(id => { const cb = document.getElementById(id); if (cb && cb.checked) { cb.checked = false; cb.onchange({target: cb}); } });
+  geo.trigger();
+}
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
 function visible(f) {
   return f.properties.lager === 'vandring' ? document.getElementById('cb-vandring').checked : document.getElementById('cb-cykel').checked;
