@@ -187,14 +187,22 @@ map.on('click', e => {
 });
 if (window.innerWidth < 600) document.getElementById('panel').classList.add('closed');
 document.getElementById('toggle').onclick = () => document.getElementById('panel').classList.toggle('closed');
-document.getElementById('sok').addEventListener('change', e => {
-  const q = e.target.value.trim(); if (!q || !DATA) return;
-  let hits = DATA.features.filter(f => f.properties.namn === q || f.properties.omrade.split(', ').includes(q));
-  if (!hits.length && window.STROV) { const sh = window.STROV.features.filter(f => !f.properties.stig && f.properties.namn === q); if (sh.length) { map.fitBounds(bounds(sh.map(f => ({geometry: {type: 'MultiLineString', coordinates: f.geometry.type === 'Polygon' ? f.geometry.coordinates : f.geometry.coordinates.flat()}}))), {padding: 60, maxZoom: 15}); return; } }
-  if (!hits.length) return;
-  map.fitBounds(bounds(hits), {padding: 60, maxZoom: 15});
-  if (hits.length === 1) { const c = lines(hits[0].geometry)[0]; select(hits[0], c[Math.floor(c.length / 2)]); }
-});
+function sok(q) {
+  q = q.trim().toLowerCase(); if (q.length < 2 || !DATA) return;
+  const info = document.getElementById('info');
+  const traff = f => (f.properties.namn + ' ' + (f.properties.omrade || '')).toLowerCase().includes(q);
+  const leder = DATA.features.filter(f => visible(f) && traff(f));
+  const strov = (window.STROV ? window.STROV.features : []).filter(f => !f.properties.stig && f.properties.namn.toLowerCase().includes(q));
+  if (!leder.length && !strov.length) { info.textContent = `Inget hittades för "${q}".`; return; }
+  const geo = [...leder, ...strov.map(f => ({geometry: {type: 'MultiLineString', coordinates: f.geometry.type === 'Polygon' ? f.geometry.coordinates : f.geometry.coordinates.flat()}}))];
+  map.fitBounds(bounds(geo), {padding: 60, maxZoom: 15});
+  info.textContent = `${leder.length} leder och ${strov.length} strövområden för "${q}".`;
+  if (leder.length === 1 && !strov.length) { const c = lines(leder[0].geometry)[0]; select(leder[0], c[Math.floor(c.length / 2)]); }
+  if (window.innerWidth < 600) document.getElementById('panel').classList.add('closed');
+}
+const sokruta = document.getElementById('sok');
+sokruta.addEventListener('change', e => sok(e.target.value));
+sokruta.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sok(e.target.value); sokruta.blur(); } });
 
 // GPX: lägger delsträckorna i följd, med start i en fri ände. Skarvar över 200 m blir egna spårdelar (luckor i datat).
 function km(a, b) { return Math.hypot((a[0] - b[0]) * 111.32 * Math.cos(a[1] * Math.PI / 180), (a[1] - b[1]) * 110.57); }
