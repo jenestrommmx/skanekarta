@@ -69,7 +69,10 @@ const map = new maplibregl.Map({
   attributionControl: false
 });
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
-map.addControl(new maplibregl.GeolocateControl({trackUserLocation: true}), 'top-right');
+// Strövläge: adressen slutar på ?strov -> bara strövområden tända och zoom till din position
+const STROVLAGE = /[?&]strov\b/.test(location.search);
+const geo = new maplibregl.GeolocateControl({trackUserLocation: true, fitBoundsOptions: {maxZoom: STROVLAGE ? 12 : 15}});
+map.addControl(geo, 'top-right');
 map.addControl(new maplibregl.ScaleControl({unit: 'metric'}), 'bottom-left');
 map.addControl(new maplibregl.AttributionControl({compact: true,
   customAttribution: 'Leder: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap-bidragsgivare</a>, Naturvårdsverket (CC0)'}));
@@ -132,11 +135,41 @@ map.on('load', () => {
   map.on('zoomend', laddaGrus); laddaGrus();
   const names = [...new Set(DATA.features.flatMap(f => [f.properties.namn, ...(f.properties.omrade ? f.properties.omrade.split(', ') : [])]))].sort((a, b) => a.localeCompare(b, 'sv'));
   document.getElementById('namn').innerHTML = names.map(n => `<option value="${esc(n)}">`).join('');
+  if (STROVLAGE) strovlage();
+  laddaEgna();
 });
 
+// Egna slingor: privat lager som bara laddas när sidan öppnas lokalt (../privat/egna.js, finns aldrig på GitHub).
+function laddaEgna() {
+  if (!(location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname))) return;
+  const s = document.createElement('script'); s.src = '../privat/egna.js';
+  s.onload = () => {
+    const E = window.EGNA; if (!E || !E.features.length) return;
+    const n0 = DATA.features.length;
+    E.features.forEach((f, i) => { f.id = n0 + i; DATA.features.push(f); });
+    map.getSource('leder').setData(DATA);
+    map.addLayer({id: 'egna', type: 'line', source: 'leder', filter: ['==', ['get', 'lager'], 'egen'],
+      paint: {'line-color': '#8e24aa', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2.5, 14, 5.5]},
+      layout: {'line-cap': 'round', 'line-join': 'round'}}, 'traff');
+    const lbl = document.createElement('label');
+    lbl.innerHTML = `<input type="checkbox" id="cb-egna" checked> Mina slingor (${E.features.length}, privat)`;
+    document.getElementById('cb-grus').parentElement.after(lbl);
+    document.getElementById('cb-egna').onchange = e => map.setLayoutProperty('egna', 'visibility', e.target.checked ? 'visible' : 'none');
+    document.getElementById('legend').insertAdjacentHTML('afterbegin', '<div><span class="sw" style="background:#8e24aa;height:5px"></span>Mina slingor (bara på den här datorn)</div>');
+    document.getElementById('namn').innerHTML += E.features.map(f => `<option value="${esc(f.properties.namn)}">`).join('');
+  };
+  document.head.appendChild(s);
+}
+
+function strovlage() {
+  ['cb-vandring', 'cb-cykel', 'cb-grus'].forEach(id => { const cb = document.getElementById(id); if (cb && cb.checked) { cb.checked = false; cb.onchange({target: cb}); } });
+  geo.trigger();
+}
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
 function visible(f) {
-  return f.properties.lager === 'vandring' ? document.getElementById('cb-vandring').checked : document.getElementById('cb-cykel').checked;
+  const l = f.properties.lager;
+  if (l === 'egen') { const cb = document.getElementById('cb-egna'); return !cb || cb.checked; }
+  return l === 'vandring' ? document.getElementById('cb-vandring').checked : document.getElementById('cb-cykel').checked;
 }
 function bounds(fs) {
   const b = new maplibregl.LngLatBounds();
@@ -153,7 +186,7 @@ function select(f, lngLat) {
   selected = f;
   map.setFilter('vald', ['==', ['id'], f.id]);
   const p = f.properties;
-  const src = p.kalla === 'OpenStreetMap' ? `<a href="https://www.openstreetmap.org/relation/${p.id.slice(4)}" target="_blank" rel="noopener">OpenStreetMap</a>` : 'Naturvårdsverket';
+  const src = p.kalla === 'Egen' ? 'egen inspelning' + (p.datum ? ' ' + p.datum : '') : p.kalla === 'OpenStreetMap' ? `<a href="https://www.openstreetmap.org/relation/${p.id.slice(4)}" target="_blank" rel="noopener">OpenStreetMap</a>` : 'Naturvårdsverket';
   const meta = [p.km.toLocaleString('sv-SE', {maximumFractionDigits: 1}) + ' km', p.kommun, p.omrade, p.typ && p.kalla !== 'OpenStreetMap' ? p.typ : '', p.markering && p.kalla !== 'OpenStreetMap' ? 'Markering: ' + p.markering : ''].filter(Boolean).map(esc).join(' · ');
   new maplibregl.Popup({maxWidth: '280px'}).setLngLat(lngLat).setHTML(
     `<div class="pp"><h3>${esc(p.namn)}</h3><div class="meta">${meta}<br>Källa: ${src}${p.webb ? ` · <a href="${esc(p.webb)}" target="_blank" rel="noopener">webbplats</a>` : ''}</div>
@@ -244,7 +277,7 @@ function laddaGPX() {
   const p = selected.properties, k = kedja(lines(selected.geometry));
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Skånekarta" xmlns="http://www.topografix.com/GPX/1/1">
-<metadata><name>${esc(p.namn)}</name><desc>Källa: ${p.kalla === 'OpenStreetMap' ? '© OpenStreetMap-bidragsgivare (ODbL)' : 'Naturvårdsverket (CC0)'}</desc></metadata>
+<metadata><name>${esc(p.namn)}</name><desc>Källa: ${p.kalla === 'Egen' ? 'Egen inspelning' : p.kalla === 'OpenStreetMap' ? '© OpenStreetMap-bidragsgivare (ODbL)' : 'Naturvårdsverket (CC0)'}</desc></metadata>
 <trk><name>${esc(p.namn)}</name>
 ${k.delar.map(d => '<trkseg>\n' + d.map(c => `<trkpt lat="${c[1]}" lon="${c[0]}"/>`).join('\n') + '\n</trkseg>').join('\n')}
 </trk></gpx>`;
